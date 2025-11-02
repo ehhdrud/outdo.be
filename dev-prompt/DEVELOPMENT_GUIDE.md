@@ -1,10 +1,23 @@
-# Outdo 백엔드 구성 계획서
+# Outdo 루틴 관리 시스템 개발 가이드
 
-> 이 문서는 `ROUTINE_REQUIREMENTS.md`를 기반으로 작성되었습니다.
+> 이 문서는 요구사항부터 백엔드 구현까지 모든 내용을 포함한 통합 가이드입니다.
 
 ---
 
-## 🎯 핵심 설계 원칙
+## 📋 목차
+
+1. [핵심 개념](#-핵심-개념)
+2. [화면별 동작 정의](#-화면별-동작-정의)
+3. [데이터베이스 스키마](#️-데이터베이스-스키마)
+4. [API 엔드포인트](#-api-엔드포인트)
+5. [백엔드 로직 구현](#-백엔드-로직-구현)
+6. [모듈 구조](#️-nestjs-모듈-구조)
+7. [구현 체크리스트](#-구현-체크리스트)
+8. [주의사항](#️-주의사항)
+
+---
+
+## 🎯 핵심 개념
 
 ### 루틴 관리 철학
 
@@ -13,11 +26,106 @@
 3. **날짜별 기록 분리**: 루틴 이름은 `routines` 테이블, 실행 기록은 `routine_days` 테이블
 4. **이름 변경의 일관성**: 루틴 이름 변경 시 모든 날짜에 동일하게 반영
 
+### 데이터 구조
+
+- **Routine**: 루틴의 정체성 (이름)
+- **RoutineDay**: 날짜별 실행 기록
+- **RoutineDayWorkout**: 날짜별 운동 기록
+- **RoutineDaySet**: 날짜별 세트 기록
+
 ### 제약사항
 
 - ✅ 같은 사용자는 같은 `routine_name`을 중복 생성할 수 없음
 - ✅ 같은 루틴은 같은 날짜에 하나의 기록만 가능
 - ✅ 다른 이름의 루틴은 같은 날짜에 여러 개 생성 가능
+
+### 예시
+
+"Back" 루틴(`routine_pk = 1`)을 2025-10-01/08/15에 실행:
+
+- `routine_pk = 1` (단일 루틴)
+- `routine_days` 테이블에 3개의 레코드 (각 날짜별)
+- 이름은 모두 동일하게 "Back"
+
+---
+
+## 📱 화면별 동작 정의
+
+### 1. Routines.tsx (루틴 목록 화면)
+
+#### 기능
+
+- 사용자가 만든 모든 루틴 목록 표시
+- 새로운 루틴 추가 (`Add routine` 버튼)
+
+#### 동작
+
+**루틴 목록 조회**
+
+- API: `GET /routines`
+- 각 루틴의 가장 최근 실행 날짜 정보 표시
+
+**루틴 클릭**
+
+- `navigate('/routines/${routine_pk}')`
+- 무조건 오늘 날짜의 루틴을 기록/수정
+- 오늘 날짜 기록 있으면 UPDATE, 없으면 CREATE
+
+**Add routine 클릭**
+
+- `navigate('/routines/new')`
+- 새 루틴 작성 화면으로 이동
+
+---
+
+### 2. RoutineDetail.tsx (루틴 작성/수정 화면)
+
+#### 경로 구분
+
+- `/routines/new` → 새 루틴 작성
+- `/routines/:routine_pk` → 기존 루틴 수정
+
+#### 시나리오 1: 새 루틴 작성
+
+1. 사용자가 루틴 작성 후 `Save` 클릭
+2. API: `POST /routines`
+3. 백엔드 로직:
+   - 같은 `routine_name` 존재 시 **에러 반환**
+   - 없으면 새 `Routine` 생성 + 오늘 날짜의 `RoutineDay` 생성
+
+#### 시나리오 2: 오늘 날짜 루틴 수정
+
+1. Routines.tsx에서 루틴 클릭
+2. API: `GET /routines/:routine_pk/today`
+   - 오늘 날짜 기록 있으면 반환
+   - 없으면 빈 폼 반환
+3. 사용자가 수정 후 `Save` 클릭
+4. API: `POST/PATCH /routines/:routine_pk/days/today`
+   - 오늘 날짜 기록 있으면 UPDATE
+   - 없으면 CREATE
+
+#### 시나리오 3: 과거 날짜 수정
+
+1. SummaryChart.tsx에서 특정 날짜 클릭
+2. API: `GET /routines/by-date?date=2025-10-15`
+3. 사용자가 수정 후 `Save` 클릭
+4. API: `POST/PATCH /routines/:routine_pk/days`
+   - 해당 날짜 기록 있으면 UPDATE
+   - 없으면 CREATE
+
+---
+
+### 3. SummaryChart.tsx (대시보드 차트)
+
+#### 기능
+
+- 날짜별 활동 기록을 그리드로 표시
+- 활동 레벨(0, 1, 2)을 색상으로 표현
+
+#### 동작
+
+- API: `GET /dashboard/activities?startDate=...&endDate=...`
+- 날짜 클릭 시 → `/routines/by-date?date=...`로 이동
 
 ---
 
@@ -35,7 +143,7 @@ CREATE TABLE users (
 );
 ```
 
-### Routines (루틴 정의: 이름만 관리)
+### Routines (루틴 정의)
 
 ```sql
 CREATE TABLE routines (
@@ -146,9 +254,32 @@ CREATE TABLE refresh_tokens (
 | ------ | ------------------------------------------------- | --------------------- |
 | GET    | `/dashboard/activities?startDate=...&endDate=...` | 날짜별 활동 기록 조회 |
 
+### API 응답 형식
+
+**성공**
+
+```json
+{
+  "success": true,
+  "data": { ... }
+}
+```
+
+**실패**
+
+```json
+{
+  "success": false,
+  "message": "에러 메시지",
+  "extras": {
+    "rs_code": "DOE3000"
+  }
+}
+```
+
 ---
 
-## 💻 핵심 백엔드 로직
+## 💻 백엔드 로직 구현
 
 ### POST /routines (새 루틴 생성)
 
@@ -179,7 +310,22 @@ async createRoutine(userId: number, dto: CreateRoutineDto) {
   });
 
   // 4. Workouts & Sets 저장
-  // ... (dto.workouts 처리)
+  for (const workout of dto.workouts) {
+    const savedWorkout = await this.workoutRepo.save({
+      routine_day_pk: routineDay.routine_day_pk,
+      workout_name: workout.workout_name,
+      order: workout.order,
+      notes: workout.notes
+    });
+
+    for (const set of workout.sets) {
+      await this.setRepo.save({
+        routine_day_workout_pk: savedWorkout.routine_day_workout_pk,
+        weight: set.weight,
+        reps: set.reps
+      });
+    }
+  }
 
   return routine;
 }
@@ -238,9 +384,53 @@ async saveTodayRoutine(routinePk: number, userId: number, dto: SaveRoutineDayDto
   }
 
   // Workouts & Sets 저장
-  // ... (dto.workouts 처리)
+  for (const workout of dto.workouts) {
+    const savedWorkout = await this.workoutRepo.save({
+      routine_day_pk: routineDay.routine_day_pk,
+      workout_name: workout.workout_name,
+      order: workout.order,
+      notes: workout.notes
+    });
+
+    for (const set of workout.sets) {
+      await this.setRepo.save({
+        routine_day_workout_pk: savedWorkout.routine_day_workout_pk,
+        weight: set.weight,
+        reps: set.reps
+      });
+    }
+  }
 
   return routineDay;
+}
+```
+
+### GET /routines (루틴 목록 조회)
+
+```typescript
+async getRoutinesWithLatestInfo(userId: number) {
+  const routines = await this.routineRepo.find({
+    where: { user_pk: userId }
+  });
+
+  const routinesWithLatest = await Promise.all(
+    routines.map(async (routine) => {
+      const latestDay = await this.routineDayRepo.findOne({
+        where: { routine_pk: routine.routine_pk },
+        order: { session_date: 'DESC' },
+        relations: ['workouts', 'workouts.sets']
+      });
+
+      return {
+        routine_pk: routine.routine_pk,
+        routine_name: routine.routine_name,
+        last_session_date: latestDay?.session_date || null,
+        workouts: latestDay?.workouts || []
+      };
+    })
+  );
+
+  return routinesWithLatest;
 }
 ```
 
@@ -285,31 +475,6 @@ src/
     ├── dashboard.module.ts
     ├── dashboard.controller.ts
     └── dashboard.service.ts
-```
-
----
-
-## 🔄 API 응답 형식
-
-### 성공
-
-```json
-{
-  "success": true,
-  "data": { ... }
-}
-```
-
-### 실패
-
-```json
-{
-  "success": false,
-  "message": "에러 메시지",
-  "extras": {
-    "rs_code": "DOE3000"
-  }
-}
 ```
 
 ---
@@ -376,13 +541,39 @@ src/
 - 프로덕션: 마이그레이션 사용
 - JWT 시크릿, DB 정보는 환경 변수로 관리
 
+### 6. 삭제 정책
+
+- 사용자 삭제 → 모든 루틴 및 기록 삭제 (`ON DELETE CASCADE`)
+- 루틴 삭제 → 모든 날짜의 기록 삭제
+- 특정 날짜 기록 삭제 → 해당 날짜만 삭제
+
 ---
 
 ## 📦 필수 패키지
 
 ```bash
+# JWT & Auth
 npm install @nestjs/jwt @nestjs/passport passport passport-jwt bcrypt
-npm install @nestjs/typeorm typeorm mysql2
-npm install class-validator class-transformer
 npm install --save-dev @types/passport-jwt @types/bcrypt
+
+# TypeORM & Database
+npm install @nestjs/typeorm typeorm mysql2
+
+# Validation
+npm install class-validator class-transformer
+
+# Config
+npm install @nestjs/config
 ```
+
+---
+
+## 🔍 핵심 검증 사항
+
+- [ ] 같은 이름의 루틴 중복 생성 불가 (에러 반환)
+- [ ] 다른 이름의 루틴은 같은 날짜에 여러 개 생성 가능
+- [ ] 해당 `routine_pk`의 해당 날짜 기록이 있으면 UPDATE, 없으면 CREATE
+- [ ] 같은 루틴의 같은 날짜는 하나의 기록만 (UNIQUE 제약)
+- [ ] 다른 `routine_pk`의 기록은 영향을 받지 않음
+- [ ] 루틴 이름 변경 시 모든 날짜에 반영
+- [ ] 사용자 삭제 시 모든 루틴 및 기록 삭제

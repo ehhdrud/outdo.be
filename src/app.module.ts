@@ -1,6 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { User } from './users/entities/user.entity';
+import { RefreshToken } from './auth/entities/refresh-token.entity';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -21,13 +26,17 @@ import { TypeOrmModule } from '@nestjs/typeorm';
         username: configService.get('DB_USERNAME'),
         password: configService.get('DB_PASSWORD'),
         database: configService.get('DB_DATABASE'),
-        autoLoadEntities: true, // Entity 자동 로드
+        entities: [User, RefreshToken], // 엔티티 명시적으로 등록
+        autoLoadEntities: true, // Entity 자동 로드 (추가 엔티티용)
         synchronize: true, // 개발 환경에서만 사용! (자동 테이블 생성)
         logging: true, // SQL 쿼리 로그 출력
       }),
     }),
+
+    // Auth 모듈
+    AuthModule,
   ],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule {}
-
-
