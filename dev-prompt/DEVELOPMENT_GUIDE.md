@@ -219,13 +219,23 @@ CREATE TABLE refresh_tokens (
 
 ### 인증
 
-| Method | Endpoint               | 설명          |
-| ------ | ---------------------- | ------------- |
-| POST   | `/auth/signup`         | 회원가입      |
-| POST   | `/auth/signin`         | 로그인        |
-| POST   | `/auth/renewalToken`   | 토큰 갱신     |
-| POST   | `/auth/changePassword` | 비밀번호 변경 |
-| POST   | `/auth/findPassword`   | 비밀번호 찾기 |
+| Method | Endpoint                | 설명                     |
+| ------ | ----------------------- | ------------------------ |
+| POST   | `/auth/signup`          | 회원가입                 |
+| POST   | `/auth/signin`          | 로그인 (이메일/비밀번호) |
+| GET    | `/auth/google`          | 구글 로그인 시작         |
+| GET    | `/auth/google/callback` | 구글 로그인 콜백         |
+| POST   | `/auth/renewalToken`    | 토큰 갱신                |
+| POST   | `/auth/changePassword`  | 비밀번호 변경            |
+| POST   | `/auth/findPassword`    | 비밀번호 찾기            |
+
+**구글 로그인 플로우:**
+
+1. 사용자가 `/auth/google`로 접근
+2. 구글 OAuth 인증 페이지로 리다이렉트
+3. 사용자 승인 후 `/auth/google/callback`으로 리다이렉트
+4. 구글 사용자 정보로 기존 회원 확인 또는 신규 회원가입
+5. Access Token 및 Refresh Token 발급 후 반환
 
 ### 사용자
 

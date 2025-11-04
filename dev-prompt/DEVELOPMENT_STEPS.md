@@ -12,7 +12,15 @@
 - [ ] DB 연결 정보 설정 (HOST, PORT, USERNAME, PASSWORD, DATABASE)
 - [ ] JWT 시크릿 키 설정
 - [ ] 포트 번호 설정
+- [ ] 구글 OAuth 설정 (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_CALLBACK_URL)
 - **검증**: `.env` 파일이 존재하고 모든 변수가 설정됨
+
+**구글 OAuth 설정 방법:**
+
+1. [Google Cloud Console](https://console.cloud.google.com/)에서 프로젝트 생성
+2. API 및 서비스 > 사용자 인증 정보 > OAuth 2.0 클라이언트 ID 만들기
+3. 승인된 리디렉션 URI에 `http://localhost:3000/auth/google/callback` 추가
+4. Client ID와 Client Secret을 `.env`에 설정
 
 ### Step 0-2: TypeORM 설정
 
@@ -74,6 +82,16 @@
 - [ ] Access Token 발급
 - [ ] Refresh Token 발급 및 DB 저장
 - **검증**: 로그인 성공 시 토큰 2개 반환
+
+### Step 2-3-1: 구글 로그인 API
+
+- [ ] `passport-google-oauth20` 패키지 설치
+- [ ] Google OAuth Strategy 생성 (`google.strategy.ts`)
+- [ ] `GET /auth/google` 엔드포인트 생성 (OAuth 시작)
+- [ ] `GET /auth/google/callback` 엔드포인트 생성 (OAuth 콜백)
+- [ ] 구글 사용자 정보로 기존 회원 확인 또는 신규 회원가입
+- [ ] Access Token 및 Refresh Token 발급
+- **검증**: 구글 로그인 성공 시 토큰 2개 반환
 
 ### Step 2-4: JWT 인증 가드
 
