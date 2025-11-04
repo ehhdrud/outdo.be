@@ -14,3 +14,4 @@ export class SignupDto {
   @IsNotEmpty({ message: '이름은 필수입니다' })
   name: string;
 }
+
