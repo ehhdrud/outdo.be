@@ -1,5 +1,7 @@
-import { Controller, Get, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, HttpException, HttpStatus, UseGuards } from '@nestjs/common';
 import { AppService } from './app.service';
+import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { User, UserPayload } from './common/decorators/user.decorator';
 
 @Controller()
 export class AppController {
@@ -29,5 +31,18 @@ export class AppController {
       },
       HttpStatus.BAD_REQUEST,
     );
+  }
+
+  // JWT 인증 가드 테스트 엔드포인트
+  @UseGuards(JwtAuthGuard)
+  @Get('test/auth')
+  testAuth(@User() user: UserPayload) {
+    return {
+      message: 'JWT 인증 성공',
+      user: {
+        user_pk: user.user_pk,
+        email: user.email,
+      },
+    };
   }
 }

@@ -4,8 +4,9 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 
 export interface JwtPayload {
-  user_pk: number;
+  sub: number; // user_pk (JWT 표준: subject)
   email: string;
+  user_pk?: number; // 하위 호환성을 위한 필드 (선택적)
 }
 
 @Injectable()
@@ -19,12 +20,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
-    if (!payload.user_pk || !payload.email) {
+    // sub (JWT 표준) 또는 user_pk (하위 호환성) 사용
+    const userPk = payload.sub || payload.user_pk;
+    
+    if (!userPk || !payload.email) {
       throw new UnauthorizedException('Invalid token payload');
     }
 
     return {
-      user_pk: payload.user_pk,
+      user_pk: userPk,
       email: payload.email,
     };
   }

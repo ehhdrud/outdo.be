@@ -3,7 +3,11 @@ import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { SignupDto } from './dto/signup.dto';
 import { SigninDto } from './dto/signin.dto';
+import { RenewalTokenDto } from './dto/renewal-token.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { Public } from '../common/decorators/public.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { User, UserPayload } from '../common/decorators/user.decorator';
 
 @Controller('auth')
 export class AuthController {
@@ -44,5 +48,22 @@ export class AuthController {
       refresh_token: tokens.refresh_token,
       redirect_url: `${frontendUrl}/auth/callback?access_token=${tokens.access_token}&refresh_token=${tokens.refresh_token}`,
     };
+  }
+
+  @Public()
+  @Post('renewalToken')
+  async renewalToken(@Body() renewalTokenDto: RenewalTokenDto) {
+    const tokens = await this.authService.renewalToken(renewalTokenDto);
+    return tokens;
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('changePassword')
+  async changePassword(
+    @User() user: UserPayload,
+    @Body() changePasswordDto: ChangePasswordDto,
+  ) {
+    const result = await this.authService.changePassword(user.user_pk, changePasswordDto);
+    return result;
   }
 }

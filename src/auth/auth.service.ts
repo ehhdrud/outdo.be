@@ -12,6 +12,8 @@ import { User } from '../users/entities/user.entity';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { SignupDto } from './dto/signup.dto';
 import { SigninDto } from './dto/signin.dto';
+import { RenewalTokenDto } from './dto/renewal-token.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Injectable()
 export class AuthService {
@@ -50,8 +52,8 @@ export class AuthService {
     try {
       const savedUser = await this.userRepository.save(user);
       // password 제외하고 반환
-      delete (savedUser as any).password;
-      return savedUser;
+      const { password, ...userWithoutPassword } = savedUser;
+      return userWithoutPassword as Omit<User, 'password'>;
     } catch (error) {
       throw new InternalServerErrorException('회원가입 중 오류가 발생했습니다');
     }
@@ -72,17 +74,22 @@ export class AuthService {
       throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다');
     }
 
-    // 2. 비밀번호 검증
+    // 2. 비밀번호가 없는 경우 (구글 로그인 등) 체크
+    if (!user.password) {
+      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다');
+    }
+
+    // 3. 비밀번호 검증
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다');
     }
 
-    // 3. Access Token 발급
+    // 4. Access Token 발급
     const payload = { sub: user.user_pk, email: user.email };
     const access_token = this.jwtService.sign(payload);
 
-    // 4. Refresh Token 발급 및 DB 저장
+    // 5. Refresh Token 발급 및 DB 저장
     const refreshTokenPayload = {
       sub: user.user_pk,
       email: user.email,
@@ -178,5 +185,103 @@ export class AuthService {
       access_token,
       refresh_token,
     };
+  }
+
+  async renewalToken(renewalTokenDto: RenewalTokenDto): Promise<{
+    access_token: string;
+  }> {
+    const { refresh_token } = renewalTokenDto;
+
+    try {
+      // 1. Refresh Token 검증 (JWT 토큰 자체가 유효한지 확인)
+      const decoded = this.jwtService.verify(refresh_token);
+      
+      if (!decoded.sub || !decoded.email || decoded.type !== 'refresh') {
+        throw new UnauthorizedException('유효하지 않은 Refresh Token입니다');
+      }
+
+      // 2. DB에서 Refresh Token 조회
+      const refreshTokenEntity = await this.refreshTokenRepository.findOne({
+        where: {
+          token: refresh_token,
+          user_pk: decoded.sub,
+        },
+      });
+
+      if (!refreshTokenEntity) {
+        throw new UnauthorizedException('Refresh Token이 존재하지 않습니다');
+      }
+
+      // 3. 만료 확인
+      const now = new Date();
+      if (refreshTokenEntity.expires_at < now) {
+        // 만료된 토큰은 DB에서 삭제
+        await this.refreshTokenRepository.remove(refreshTokenEntity);
+        throw new UnauthorizedException('Refresh Token이 만료되었습니다');
+      }
+
+      // 4. 사용자 정보 조회
+      const user = await this.userRepository.findOne({
+        where: { user_pk: decoded.sub },
+      });
+
+      if (!user) {
+        throw new UnauthorizedException('사용자를 찾을 수 없습니다');
+      }
+
+      // 5. 새로운 Access Token 발급
+      const payload = { sub: user.user_pk, email: user.email };
+      const access_token = this.jwtService.sign(payload);
+
+      return {
+        access_token,
+      };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+      // JWT 검증 실패 등 기타 에러
+      throw new UnauthorizedException('유효하지 않은 Refresh Token입니다');
+    }
+  }
+
+  async changePassword(userPk: number, changePasswordDto: ChangePasswordDto): Promise<{ message: string }> {
+    const { current_password, new_password } = changePasswordDto;
+
+    // 1. 사용자 조회
+    const user = await this.userRepository.findOne({
+      where: { user_pk: userPk },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('사용자를 찾을 수 없습니다');
+    }
+
+    // 2. 비밀번호가 없는 경우 (구글 로그인 등) 체크
+    if (!user.password) {
+      throw new UnauthorizedException('비밀번호가 설정되지 않은 계정입니다');
+    }
+
+    // 3. 현재 비밀번호 검증
+    const isPasswordValid = await bcrypt.compare(current_password, user.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('현재 비밀번호가 올바르지 않습니다');
+    }
+
+    // 4. 새 비밀번호 해싱
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(new_password, saltRounds);
+
+    // 5. 비밀번호 업데이트
+    try {
+      user.password = hashedPassword;
+      await this.userRepository.save(user);
+
+      return {
+        message: '비밀번호가 성공적으로 변경되었습니다',
+      };
+    } catch (error) {
+      throw new InternalServerErrorException('비밀번호 변경 중 오류가 발생했습니다');
+    }
   }
 }
