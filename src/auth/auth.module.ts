@@ -12,26 +12,26 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 
 @Module({
-	imports: [
-		PassportModule.register({ defaultStrategy: 'jwt' }),
-		JwtModule.registerAsync({
-			imports: [ConfigModule],
-			inject: [ConfigService],
-			useFactory: (configService: ConfigService): JwtModuleOptions => {
-				const secret = configService.get<string>('JWT_SECRET') || 'default-secret';
-				const expiresIn = configService.get<string>('JWT_EXPIRES_IN') || '1h';
-				return {
-					secret,
-					signOptions: {
-						expiresIn: expiresIn as any,
-					},
-				};
-			},
-		}),
-		TypeOrmModule.forFeature([User, RefreshToken]),
-	],
-	controllers: [AuthController],
-	providers: [AuthService, JwtStrategy, GoogleStrategy],
-	exports: [AuthService, JwtStrategy, PassportModule],
+  imports: [
+    PassportModule.register({ defaultStrategy: 'jwt' }),
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService): JwtModuleOptions => {
+        const secret = configService.get<string>('JWT_SECRET') || 'default-secret';
+        const expiresIn = configService.get<string>('JWT_EXPIRES_IN') || '1h';
+        return {
+          secret,
+          signOptions: {
+            expiresIn: expiresIn as any,
+          },
+        };
+      },
+    }),
+    TypeOrmModule.forFeature([User, RefreshToken]),
+  ],
+  controllers: [AuthController],
+  providers: [AuthService, JwtStrategy, GoogleStrategy],
+  exports: [AuthService, JwtStrategy, PassportModule],
 })
 export class AuthModule {}
