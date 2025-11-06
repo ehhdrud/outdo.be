@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  ConflictException,
-  InternalServerErrorException,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, ConflictException, InternalServerErrorException, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
@@ -17,271 +12,315 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Injectable()
 export class AuthService {
-  constructor(
-    @InjectRepository(User)
-    private userRepository: Repository<User>,
-    @InjectRepository(RefreshToken)
-    private refreshTokenRepository: Repository<RefreshToken>,
-    private jwtService: JwtService,
-  ) {}
+	constructor(
+		@InjectRepository(User)
+		private userRepository: Repository<User>,
+		@InjectRepository(RefreshToken)
+		private refreshTokenRepository: Repository<RefreshToken>,
+		private jwtService: JwtService
+	) {}
 
-  async signup(signupDto: SignupDto): Promise<User> {
-    const { email, password, name } = signupDto;
+	async signup(signupDto: SignupDto): Promise<Omit<User, 'password'>> {
+		const { email, password, name } = signupDto;
 
-    // 1. 이메일 중복 확인
-    const existingUser = await this.userRepository.findOne({
-      where: { email },
-    });
+		// 1. 이메일 중복 확인
+		const existingUser = await this.userRepository.findOne({
+			where: { email },
+		});
 
-    if (existingUser) {
-      throw new ConflictException('이미 사용 중인 이메일입니다');
-    }
+		if (existingUser) {
+			throw new ConflictException('이미 사용 중인 이메일입니다');
+		}
 
-    // 2. 비밀번호 해싱
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+		// 2. 비밀번호 해싱
+		const saltRounds = 10;
+		const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // 3. User 생성
-    const user = this.userRepository.create({
-      email,
-      password: hashedPassword,
-      name,
-      bio: null,
-    });
+		// 3. User 생성
+		const user = this.userRepository.create({
+			email,
+			password: hashedPassword,
+			name,
+			bio: null,
+		});
 
-    try {
-      const savedUser = await this.userRepository.save(user);
-      // password 제외하고 반환
-      const { password, ...userWithoutPassword } = savedUser;
-      return userWithoutPassword as Omit<User, 'password'>;
-    } catch (error) {
-      throw new InternalServerErrorException('회원가입 중 오류가 발생했습니다');
-    }
-  }
+		try {
+			const savedUser = await this.userRepository.save(user);
+			// password 제외하고 반환
+			// eslint-disable-next-line @typescript-eslint/no-unused-vars
+			const { password, ...userWithoutPassword } = savedUser;
+			return userWithoutPassword as Omit<User, 'password'>;
+		} catch (error) {
+			// DB UNIQUE 제약 위반 (Race Condition 대비)
+			if (error.code === 'ER_DUP_ENTRY' || error.code === 1062) {
+				throw new ConflictException('이미 사용 중인 이메일입니다');
+			}
+			throw new InternalServerErrorException('회원가입 중 오류가 발생했습니다');
+		}
+	}
 
-  async signin(signinDto: SigninDto): Promise<{
-    access_token: string;
-    refresh_token: string;
-  }> {
-    const { email, password } = signinDto;
+	async signin(signinDto: SigninDto): Promise<{
+		access_token: string;
+		refresh_token: string;
+	}> {
+		const { email, password } = signinDto;
 
-    // 1. 이메일로 사용자 조회
-    const user = await this.userRepository.findOne({
-      where: { email },
-    });
+		// 1. 이메일로 사용자 조회
+		const user = await this.userRepository.findOne({
+			where: { email },
+		});
 
-    if (!user) {
-      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다');
-    }
+		if (!user) {
+			throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다');
+		}
 
-    // 2. 비밀번호가 없는 경우 (구글 로그인 등) 체크
-    if (!user.password) {
-      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다');
-    }
+		// 2. 비밀번호가 없는 경우 (구글 로그인 등) 체크
+		if (!user.password) {
+			throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다');
+		}
 
-    // 3. 비밀번호 검증
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다');
-    }
+		// 3. 비밀번호 검증
+		const isPasswordValid = await bcrypt.compare(password, user.password);
+		if (!isPasswordValid) {
+			throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다');
+		}
 
-    // 4. Access Token 발급
-    const payload = { sub: user.user_pk, email: user.email };
-    const access_token = this.jwtService.sign(payload);
+		// 4. Access Token 발급
+		const payload = { sub: user.user_pk, email: user.email };
+		const access_token = this.jwtService.sign(payload);
 
-    // 5. Refresh Token 발급 및 DB 저장
-    const refreshTokenPayload = {
-      sub: user.user_pk,
-      email: user.email,
-      type: 'refresh',
-    };
-    const refresh_token = this.jwtService.sign(refreshTokenPayload, {
-      expiresIn: '7d',
-    });
+		// 5. Refresh Token 발급 및 DB 저장
+		const refreshTokenPayload = {
+			sub: user.user_pk,
+			email: user.email,
+			type: 'refresh',
+		};
+		const refresh_token = this.jwtService.sign(refreshTokenPayload, {
+			expiresIn: '7d',
+		});
 
-    // Refresh Token DB 저장
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7일 후 만료
+		// Refresh Token DB 저장
+		// 정책: 여러 기기에서 로그인 허용 (기존 토큰 유지)
+		// 보안 강화가 필요하면 기존 토큰 삭제 로직 추가 고려
+		const expiresAt = new Date();
+		expiresAt.setDate(expiresAt.getDate() + 7); // 7일 후 만료 (JWT expiresIn과 일치)
 
-    const refreshTokenEntity = this.refreshTokenRepository.create({
-      user_pk: user.user_pk,
-      token: refresh_token,
-      expires_at: expiresAt,
-      created_at: new Date(),
-    });
+		const refreshTokenEntity = this.refreshTokenRepository.create({
+			user_pk: user.user_pk,
+			token: refresh_token,
+			expires_at: expiresAt,
+			created_at: new Date(),
+		});
 
-    await this.refreshTokenRepository.save(refreshTokenEntity);
+		await this.refreshTokenRepository.save(refreshTokenEntity);
 
-    return {
-      access_token,
-      refresh_token,
-    };
-  }
+		return {
+			access_token,
+			refresh_token,
+		};
+	}
 
-  async googleLogin(googleUser: { google_id: string; email: string; name: string }): Promise<{
-    access_token: string;
-    refresh_token: string;
-  }> {
-    const { google_id, email, name } = googleUser;
+	async googleLogin(googleUser: { google_id: string; email: string; name: string }): Promise<{
+		access_token: string;
+		refresh_token: string;
+	}> {
+		const { google_id, email, name } = googleUser;
 
-    // 1. google_id로 기존 회원 확인
-    let user = await this.userRepository.findOne({
-      where: { google_id },
-    });
+		// 1. google_id로 기존 회원 확인
+		let user = await this.userRepository.findOne({
+			where: { google_id },
+		});
 
-    // 2. google_id로 없으면 email로 확인
-    if (!user) {
-      user = await this.userRepository.findOne({
-        where: { email },
-      });
+		// 2. google_id로 없으면 email로 확인
+		if (!user) {
+			user = await this.userRepository.findOne({
+				where: { email },
+			});
 
-      // 3. email로 찾았으면 google_id 업데이트
-      if (user) {
-        user.google_id = google_id;
-        await this.userRepository.save(user);
-      }
-    }
+			// 3. email로 찾았으면 google_id 업데이트
+			// 일반 회원가입 후 구글 로그인 시나리오: google_id만 추가
+			if (user) {
+				// 이미 google_id가 있는 경우는 다른 구글 계정과 충돌
+				if (user.google_id) {
+					// 이미 다른 구글 계정으로 연결된 이메일
+					throw new ConflictException('이미 다른 구글 계정으로 연결된 이메일입니다');
+				}
+				// google_id가 없으면 추가
+				try {
+					user.google_id = google_id;
+					await this.userRepository.save(user);
+				} catch (error) {
+					// google_id가 이미 다른 사용자에게 사용 중인 경우
+					if (error.code === 'ER_DUP_ENTRY' || error.code === 1062) {
+						throw new ConflictException('이미 사용 중인 구글 계정입니다');
+					}
+					throw new InternalServerErrorException('구글 계정 연결 중 오류가 발생했습니다');
+				}
+			}
+		}
 
-    // 4. 둘 다 없으면 신규 회원가입
-    if (!user) {
-      user = this.userRepository.create({
-        email,
-        google_id,
-        name,
-        password: null, // 구글 로그인은 비밀번호 없음
-        bio: null,
-      });
-      user = await this.userRepository.save(user);
-    }
+		// 4. 둘 다 없으면 신규 회원가입
+		if (!user) {
+			try {
+				user = this.userRepository.create({
+					email,
+					google_id,
+					name,
+					password: null, // 구글 로그인은 비밀번호 없음
+					bio: null,
+				});
+				user = await this.userRepository.save(user);
+			} catch (error) {
+				// DB UNIQUE 제약 위반 (Race Condition 또는 이메일/구글ID 중복)
+				if (error.code === 'ER_DUP_ENTRY' || error.code === 1062) {
+					// 중복 발생 시 다시 조회 시도 (OR 조건)
+					user = await this.userRepository.findOne({
+						where: [{ email: email }, { google_id: google_id }],
+					});
+					if (!user) {
+						throw new ConflictException('이미 사용 중인 이메일 또는 구글 계정입니다');
+					}
+				} else {
+					throw new InternalServerErrorException('구글 로그인 중 오류가 발생했습니다');
+				}
+			}
+		}
 
-    // 5. Access Token 발급
-    const payload = { sub: user.user_pk, email: user.email };
-    const access_token = this.jwtService.sign(payload);
+		// 5. Access Token 발급
+		const payload = { sub: user.user_pk, email: user.email };
+		const access_token = this.jwtService.sign(payload);
 
-    // 6. Refresh Token 발급 및 DB 저장
-    const refreshTokenPayload = {
-      sub: user.user_pk,
-      email: user.email,
-      type: 'refresh',
-    };
-    const refresh_token = this.jwtService.sign(refreshTokenPayload, {
-      expiresIn: '7d',
-    });
+		// 6. Refresh Token 발급 및 DB 저장
+		const refreshTokenPayload = {
+			sub: user.user_pk,
+			email: user.email,
+			type: 'refresh',
+		};
+		const refresh_token = this.jwtService.sign(refreshTokenPayload, {
+			expiresIn: '7d',
+		});
 
-    // Refresh Token DB 저장
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7일 후 만료
+		// Refresh Token DB 저장
+		// 정책: 여러 기기에서 로그인 허용 (기존 토큰 유지)
+		// 보안 강화가 필요하면 기존 토큰 삭제 로직 추가 고려
+		const expiresAt = new Date();
+		expiresAt.setDate(expiresAt.getDate() + 7); // 7일 후 만료 (JWT expiresIn과 일치)
 
-    const refreshTokenEntity = this.refreshTokenRepository.create({
-      user_pk: user.user_pk,
-      token: refresh_token,
-      expires_at: expiresAt,
-      created_at: new Date(),
-    });
+		const refreshTokenEntity = this.refreshTokenRepository.create({
+			user_pk: user.user_pk,
+			token: refresh_token,
+			expires_at: expiresAt,
+			created_at: new Date(),
+		});
 
-    await this.refreshTokenRepository.save(refreshTokenEntity);
+		await this.refreshTokenRepository.save(refreshTokenEntity);
 
-    return {
-      access_token,
-      refresh_token,
-    };
-  }
+		return {
+			access_token,
+			refresh_token,
+		};
+	}
 
-  async renewalToken(renewalTokenDto: RenewalTokenDto): Promise<{
-    access_token: string;
-  }> {
-    const { refresh_token } = renewalTokenDto;
+	async renewalToken(renewalTokenDto: RenewalTokenDto): Promise<{
+		access_token: string;
+	}> {
+		const { refresh_token } = renewalTokenDto;
 
-    try {
-      // 1. Refresh Token 검증 (JWT 토큰 자체가 유효한지 확인)
-      const decoded = this.jwtService.verify(refresh_token);
-      
-      if (!decoded.sub || !decoded.email || decoded.type !== 'refresh') {
-        throw new UnauthorizedException('유효하지 않은 Refresh Token입니다');
-      }
+		try {
+			// 1. Refresh Token 검증 (JWT 토큰 자체가 유효한지 확인)
+			const decoded = this.jwtService.verify(refresh_token);
+			if (!decoded.sub || !decoded.email || decoded.type !== 'refresh') {
+				throw new UnauthorizedException('유효하지 않은 Refresh Token입니다');
+			}
 
-      // 2. DB에서 Refresh Token 조회
-      const refreshTokenEntity = await this.refreshTokenRepository.findOne({
-        where: {
-          token: refresh_token,
-          user_pk: decoded.sub,
-        },
-      });
+			// 2. DB에서 Refresh Token 조회
+			const refreshTokenEntity = await this.refreshTokenRepository.findOne({
+				where: {
+					token: refresh_token,
+					user_pk: decoded.sub,
+				},
+			});
 
-      if (!refreshTokenEntity) {
-        throw new UnauthorizedException('Refresh Token이 존재하지 않습니다');
-      }
+			if (!refreshTokenEntity) {
+				throw new UnauthorizedException('Refresh Token이 존재하지 않습니다');
+			}
 
-      // 3. 만료 확인
-      const now = new Date();
-      if (refreshTokenEntity.expires_at < now) {
-        // 만료된 토큰은 DB에서 삭제
-        await this.refreshTokenRepository.remove(refreshTokenEntity);
-        throw new UnauthorizedException('Refresh Token이 만료되었습니다');
-      }
+			// 3. 만료 확인
+			const now = new Date();
+			if (refreshTokenEntity.expires_at < now) {
+				// 만료된 토큰은 DB에서 삭제
+				await this.refreshTokenRepository.remove(refreshTokenEntity);
+				throw new UnauthorizedException('Refresh Token이 만료되었습니다');
+			}
 
-      // 4. 사용자 정보 조회
-      const user = await this.userRepository.findOne({
-        where: { user_pk: decoded.sub },
-      });
+			// 4. 사용자 정보 조회
+			const user = await this.userRepository.findOne({
+				where: { user_pk: decoded.sub },
+			});
 
-      if (!user) {
-        throw new UnauthorizedException('사용자를 찾을 수 없습니다');
-      }
+			if (!user) {
+				throw new UnauthorizedException('사용자를 찾을 수 없습니다');
+			}
 
-      // 5. 새로운 Access Token 발급
-      const payload = { sub: user.user_pk, email: user.email };
-      const access_token = this.jwtService.sign(payload);
+			// 5. 이메일 일치 확인 (토큰 변조 방지)
+			if (user.email !== decoded.email) {
+				throw new UnauthorizedException('토큰 정보가 일치하지 않습니다');
+			}
 
-      return {
-        access_token,
-      };
-    } catch (error) {
-      if (error instanceof UnauthorizedException) {
-        throw error;
-      }
-      // JWT 검증 실패 등 기타 에러
-      throw new UnauthorizedException('유효하지 않은 Refresh Token입니다');
-    }
-  }
+			// 6. 새로운 Access Token 발급
+			const payload = { sub: user.user_pk, email: user.email };
+			const access_token = this.jwtService.sign(payload);
 
-  async changePassword(userPk: number, changePasswordDto: ChangePasswordDto): Promise<{ message: string }> {
-    const { current_password, new_password } = changePasswordDto;
+			return {
+				access_token,
+			};
+		} catch (error) {
+			if (error instanceof UnauthorizedException) {
+				throw error;
+			}
+			// JWT 검증 실패 등 기타 에러
+			throw new UnauthorizedException('유효하지 않은 Refresh Token입니다');
+		}
+	}
 
-    // 1. 사용자 조회
-    const user = await this.userRepository.findOne({
-      where: { user_pk: userPk },
-    });
+	async changePassword(userPk: number, changePasswordDto: ChangePasswordDto): Promise<{ message: string }> {
+		const { current_password, new_password } = changePasswordDto;
 
-    if (!user) {
-      throw new UnauthorizedException('사용자를 찾을 수 없습니다');
-    }
+		// 1. 사용자 조회
+		const user = await this.userRepository.findOne({
+			where: { user_pk: userPk },
+		});
 
-    // 2. 비밀번호가 없는 경우 (구글 로그인 등) 체크
-    if (!user.password) {
-      throw new UnauthorizedException('비밀번호가 설정되지 않은 계정입니다');
-    }
+		if (!user) {
+			// JWT 인증 후이므로 NotFoundException 사용 (일관성)
+			throw new NotFoundException('사용자를 찾을 수 없습니다');
+		}
 
-    // 3. 현재 비밀번호 검증
-    const isPasswordValid = await bcrypt.compare(current_password, user.password);
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('현재 비밀번호가 올바르지 않습니다');
-    }
+		// 2. 비밀번호가 없는 경우 (구글 로그인 등) 체크
+		if (!user.password) {
+			throw new UnauthorizedException('비밀번호가 설정되지 않은 계정입니다');
+		}
 
-    // 4. 새 비밀번호 해싱
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(new_password, saltRounds);
+		// 3. 현재 비밀번호 검증
+		const isPasswordValid = await bcrypt.compare(current_password, user.password);
+		if (!isPasswordValid) {
+			throw new UnauthorizedException('현재 비밀번호가 올바르지 않습니다');
+		}
 
-    // 5. 비밀번호 업데이트
-    try {
-      user.password = hashedPassword;
-      await this.userRepository.save(user);
+		// 4. 새 비밀번호 해싱
+		const saltRounds = 10;
+		const hashedPassword = await bcrypt.hash(new_password, saltRounds);
 
-      return {
-        message: '비밀번호가 성공적으로 변경되었습니다',
-      };
-    } catch (error) {
-      throw new InternalServerErrorException('비밀번호 변경 중 오류가 발생했습니다');
-    }
-  }
+		// 5. 비밀번호 업데이트
+		try {
+			user.password = hashedPassword;
+			await this.userRepository.save(user);
+
+			return {
+				message: '비밀번호가 성공적으로 변경되었습니다',
+			};
+		} catch (error) {
+			throw new InternalServerErrorException('비밀번호 변경 중 오류가 발생했습니다');
+		}
+	}
 }
