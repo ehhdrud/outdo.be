@@ -26,10 +26,7 @@ export class UsersService {
     return userWithoutPassword as Omit<User, 'password'>;
   }
 
-  async updateProfile(
-    userPk: number,
-    updateProfileDto: UpdateProfileDto,
-  ): Promise<Omit<User, 'password'>> {
+  async updateProfile(userPk: number, updateProfileDto: UpdateProfileDto): Promise<Omit<User, 'password'>> {
     const user = await this.userRepository.findOne({
       where: { user_pk: userPk },
     });
