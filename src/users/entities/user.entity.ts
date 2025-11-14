@@ -1,7 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
 import { RefreshToken } from '../../auth/entities/refresh-token.entity';
-import { Routine } from '../../routines/entities/routine.entity';
-import { RoutineDay } from '../../routines/entities/routine-day.entity';
 
 @Entity('users')
 export class User {
@@ -25,10 +23,4 @@ export class User {
 
   @OneToMany(() => RefreshToken, (refreshToken) => refreshToken.user)
   refreshTokens: RefreshToken[];
-
-  @OneToMany(() => Routine, (routine) => routine.user)
-  routines: Routine[];
-
-  @OneToMany(() => RoutineDay, (routineDay) => routineDay.user)
-  routineDays: RoutineDay[];
 }
