@@ -5,8 +5,12 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { User } from './users/entities/user.entity';
 import { RefreshToken } from './auth/entities/refresh-token.entity';
+import { WorkoutPersonalRecord } from './dashboard/entities/workout-personal-record.entity';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { RoutinesController } from './routines/routines.controller';
+import { RoutinesService } from './routines/routines.service';
 
 @Module({
   imports: [
@@ -27,7 +31,7 @@ import { UsersModule } from './users/users.module';
         username: configService.get('DB_USERNAME'),
         password: configService.get('DB_PASSWORD'),
         database: configService.get('DB_DATABASE'),
-        entities: [User, RefreshToken], // 엔티티 명시적으로 등록
+        entities: [User, RefreshToken, WorkoutPersonalRecord], // 엔티티 명시적으로 등록
         autoLoadEntities: true, // Entity 자동 로드 (추가 엔티티용)
         synchronize: true, // 개발 환경에서만 사용! (자동 테이블 생성)
         logging: true, // SQL 쿼리 로그 출력
@@ -38,8 +42,10 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     // Users 모듈
     UsersModule,
+    // Dashboard 모듈
+    DashboardModule,
   ],
-  controllers: [AppController],
-  providers: [AppService],
+  controllers: [AppController, RoutinesController],
+  providers: [AppService, RoutinesService],
 })
 export class AppModule {}

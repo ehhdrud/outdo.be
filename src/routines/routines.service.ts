@@ -4,6 +4,7 @@ import { Routine } from './entities/routine.entity';
 import { RoutineDay } from './entities/routine-day.entity';
 import { RoutineDayWorkout } from './entities/routine-day-workout.entity';
 import { RoutineDaySet } from './entities/routine-day-set.entity';
+import { WorkoutPersonalRecord } from '../dashboard/entities/workout-personal-record.entity';
 import {
   CreateRoutineDto,
   SaveRoutineDayDto,
@@ -82,6 +83,22 @@ export class RoutinesService {
             notes: savedWorkout.notes,
             sets,
           });
+
+          // 최고 무게 체크 및 업데이트
+          if (workout.sets && workout.sets.length > 0) {
+            const currentMaxWeight = Math.max(...workout.sets.map((s) => (s.weight ?? 0)));
+            if (currentMaxWeight > 0) {
+              await this.checkAndUpdateMaxWeight(
+                manager,
+                userPk,
+                workout.workout_name,
+                workout.order ?? 0,
+                currentMaxWeight,
+                today,
+                routineDay.routine_day_pk,
+              );
+            }
+          }
         }
 
         return {
@@ -242,6 +259,22 @@ export class RoutinesService {
           notes: savedWorkout.notes,
           sets,
         });
+
+        // 최고 무게 체크 및 업데이트
+        if (workout.sets && workout.sets.length > 0) {
+          const currentMaxWeight = Math.max(...workout.sets.map((s) => (s.weight ?? 0)));
+          if (currentMaxWeight > 0) {
+            await this.checkAndUpdateMaxWeight(
+              manager,
+              userPk,
+              workout.workout_name,
+              workout.order ?? 0,
+              currentMaxWeight,
+              sessionDate,
+              routineDay.routine_day_pk,
+            );
+          }
+        }
       }
 
       return {
@@ -300,6 +333,48 @@ export class RoutinesService {
 
   private isValidDate(date: string) {
     return /^\d{4}-\d{2}-\d{2}$/.test(date);
+  }
+
+  private async checkAndUpdateMaxWeight(
+    manager: any,
+    userId: number,
+    workoutName: string,
+    order: number,
+    currentMaxWeight: number,
+    sessionDate: string,
+    routineDayPk: number,
+  ) {
+    const workoutPersonalRecordRepository = manager.getRepository(WorkoutPersonalRecord);
+
+    // 기존 최고 무게 기록 조회
+    const existingRecord = await workoutPersonalRecordRepository.findOne({
+      where: {
+        user_pk: userId,
+        workout_name: workoutName,
+        order: order,
+      },
+    });
+
+    if (!existingRecord || currentMaxWeight > existingRecord.max_weight) {
+      // 최고 무게 달성 또는 갱신
+      if (existingRecord) {
+        // 기존 레코드 업데이트
+        existingRecord.max_weight = currentMaxWeight;
+        existingRecord.achieved_at = sessionDate;
+        existingRecord.routine_day_pk = routineDayPk;
+        await workoutPersonalRecordRepository.save(existingRecord);
+      } else {
+        // 새 레코드 생성
+        await workoutPersonalRecordRepository.save({
+          user_pk: userId,
+          workout_name: workoutName,
+          order: order,
+          max_weight: currentMaxWeight,
+          achieved_at: sessionDate,
+          routine_day_pk: routineDayPk,
+        });
+      }
+    }
   }
 
   async updateRoutineName(userPk: number, routinePk: number, dto: UpdateRoutineNameDto) {

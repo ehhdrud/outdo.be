@@ -24,7 +24,7 @@ interface DayActivity {
   routine_name: string | null;
   routine_pk: number | null;
   routine_day_pk: number | null;
-  achievement: number | null; // weight * reps 합산의 증가량 합계
+  achievement: number | null; // weight * reps 합산의 증가량 합계 (activity = 2의 근거)
   has_max_weight_achieved: boolean; // 최고 무게 달성 여부 (activity = 2의 근거)
   max_weight_records: MaxWeightRecord[] | null; // 최고 무게 달성 세부 정보 (has_max_weight_achieved = true일 때만)
   is_new_routine: boolean; // 새로운 루틴 생성 여부 (activity = 2의 근거)

@@ -164,6 +164,15 @@
 - [ ] RoutineDayWorkout과의 관계 설정
 - **검증**: 서버 실행 시 `routine_day_sets` 테이블 생성
 
+### Step 4-5: WorkoutPersonalRecord 엔티티 생성
+
+- [ ] `src/dashboard/entities/workout-personal-record.entity.ts` 생성
+- [ ] 필드: `record_pk`, `user_pk`, `workout_name`, `order`, `max_weight`, `achieved_at`, `routine_day_pk`, `created_at`, `updated_at`
+- [ ] User와의 관계 설정 (`@ManyToOne`)
+- [ ] UNIQUE 제약: `(user_pk, workout_name, order)`
+- [ ] **참고**: 이 엔티티는 Dashboard 모듈에 있지만, Routines 모듈에서도 import하여 사용 (Phase 5-7 참조)
+- **검증**: 서버 실행 시 `workout_personal_records` 테이블 생성
+
 ---
 
 ## 📌 Phase 5: 루틴 생성
@@ -207,6 +216,19 @@
 - [ ] 각 workout 저장
 - [ ] 각 workout의 sets 저장
 - **검증**: 전체 루틴 생성 후 DB에서 모든 데이터 확인
+
+### Step 5-7: 최고 무게 체크 및 업데이트
+
+- [ ] Routines 모듈에 `WorkoutPersonalRecord` 엔티티를 TypeORM에 등록
+- [ ] Routines 서비스에 `WorkoutPersonalRecord` 리포지토리 주입 (TypeORM Repository)
+- [ ] `checkAndUpdateMaxWeight` 헬퍼 메서드 구현:
+  - 파라미터: `user_pk`, `workout_name`, `order`, `currentMaxWeight`, `session_date`, `routine_day_pk`
+  - `workout_personal_records` 테이블에서 기존 레코드 조회 (workout_name + order + user_pk 조합)
+  - 현재 최고 무게가 기존 `max_weight`보다 크면 `max_weight` 갱신
+  - 없으면 새 레코드 생성
+- [ ] Step 5-6의 각 workout 저장 후 `checkAndUpdateMaxWeight` 호출
+- [ ] 각 workout의 모든 세트 중 최대 `weight` 값 계산하여 전달
+- **검증**: 최고 무게 달성 시 `workout_personal_records` 테이블에 저장 확인
 
 ---
 
@@ -262,19 +284,22 @@
 
 - [ ] 기존 workouts 삭제
 - [ ] 새 workouts & sets 저장
+- [ ] 각 workout 저장 후 `checkAndUpdateMaxWeight` 메서드 호출 (Step 5-7에서 구현한 메서드 재사용)
 - **검증**: 수정 후 조회 시 변경된 데이터 확인
 
 ### Step 7-4: CREATE 로직 구현
 
 - [ ] 새 RoutineDay 생성
 - [ ] workouts & sets 저장
+- [ ] 각 workout 저장 후 `checkAndUpdateMaxWeight` 메서드 호출 (Step 5-7에서 구현한 메서드 재사용)
 - **검증**: 생성 후 조회 시 데이터 확인
 
 ### Step 7-5: 날짜별 루틴 저장 API
 
 - [ ] `POST /routines/:routine_pk/days` 엔드포인트 생성
 - [ ] DTO에 session_date 포함
-- [ ] 오늘 날짜 저장과 동일한 로직
+- [ ] 오늘 날짜 저장과 동일한 로직 (Step 7-2, 7-3, 7-4와 동일)
+- [ ] 각 workout 저장 후 최고 무게 체크 및 업데이트 포함
 - **검증**: 과거/미래 날짜에 루틴 저장 가능
 
 ---
@@ -301,22 +326,70 @@
 ### Step 9-1: 날짜별 활동 기록 조회 - 기본
 
 - [ ] `GET /dashboard/activities` 엔드포인트 생성
-- [ ] startDate, endDate 쿼리 파라미터
-- [ ] 해당 기간의 모든 날짜 생성
+- [ ] `startDate`, `endDate` 쿼리 파라미터 받기
+- [ ] 해당 기간의 모든 날짜 배열 생성 (`startDate`부터 `endDate`까지)
+- [ ] 각 날짜에 대해 `DayActivity` 객체 초기화
+  - `activity = 0`, `routine_name = null`, `routine_pk = null`, `routine_day_pk = null`
+  - `achievement = null`, `has_max_weight_achieved = false`, `max_weight_records = null`, `is_new_routine = false`
+- [ ] JWT 가드 적용
 - **검증**: 빈 날짜 배열이라도 반환
 
 ### Step 9-2: routine_days 데이터 병합
 
-- [ ] 해당 기간의 routine_days 조회
-- [ ] 날짜별로 그룹화
-- [ ] activity, routine_name, routine_pk, routine_day_pk 추가
+- [ ] 해당 기간의 `routine_days` 조회
+  - `user_pk`로 필터링
+  - `session_date`가 `startDate`와 `endDate` 사이
+  - `routine`, `workouts`, `workouts.sets` relation 포함
+- [ ] Step 9-1에서 생성한 날짜 배열에 `routine_days` 데이터 병합
+  - 각 `routine_day`에 대해 해당 날짜를 찾아서 업데이트
+  - 같은 날짜에 여러 루틴이 있으면 **각각 별도의 `DayActivity` 객체로 추가**
+  - `routine_name`, `routine_pk`, `routine_day_pk` 설정
+  - `activity` 기본값 1로 설정, `achievement`는 null 유지
+  - `has_max_weight_achieved = false`, `max_weight_records = null`, `is_new_routine = false` 초기화
 - **검증**: 루틴이 있는 날짜에 정보 표시
 
-### Step 9-3: activity 레벨 계산 (선택)
+### Step 9-3: Achievement 계산 및 Activity 업데이트
 
-- [ ] 활동 레벨 로직 구현 (0, 1, 2)
-- [ ] achievement 계산 (선택)
+- [ ] Step 9-2에서 생성한 `DayActivity` 배열에서 `routine_day_pk`가 있는 항목들에 대해:
+  - 해당 `routine_day`의 `routine_pk`로 이전 가장 최근 기록 조회
+  - **이전 기록 조회 시 현재 날짜보다 이전 날짜만 조회, 같은 `routine_pk`의 가장 최근 기록만 사용**
+  - 이전 기록 조회 시 `workouts`와 `workouts.sets` relation 포함
+  - 없으면 `achievement = null` 유지
+- [ ] **weight_increase 계산** (이전 기록이 있는 경우):
+  - 같은 `workout_name` && 같은 `order`인 운동 찾기
+  - 각 운동의 모든 세트 `weight * reps` 합산 비교 (단순 무게가 아님)
+  - 증량이 없으면 `achievement = 0`으로 설정
+  - 증량이 있으면 `achievement`에 합산
+- [ ] **최고 무게 달성 체크** (별도 수행, weight_increase 계산과 독립):
+  - 각 `routine_day_workout`의 모든 세트 중 최대 `weight` 값 계산
+  - `workout_personal_records` 테이블에서 해당 날짜에 달성한 최고 무게 기록 조회
+  - 또는 `workout_personal_records` 테이블의 `routine_day_pk`가 현재 `routine_day_pk`와 일치하는지 확인
+  - 해당 날짜에 최고 무게를 달성했으면 `has_max_weight_achieved = true` 및 `max_weight_records` 설정
+  - 여러 workout에서 최고 무게를 달성했으면 모두 `max_weight_records` 배열에 추가
+  - **참고**: 최고 무게 업데이트는 이미 Phase 5-7에서 루틴 저장 시 수행됨
+- [ ] **새로운 루틴 생성 체크**:
+  - 해당 `routine_pk`의 `created_at`이 해당 날짜와 같거나, 첫 번째 `routine_day`가 해당 날짜인지 확인
+  - 새로운 루틴이면 `is_new_routine = true` 설정
+- [ ] **activity 업데이트**:
+  - `achievement > 0` 또는 `has_max_weight_achieved = true` 또는 `is_new_routine = true` 중 하나 이상이면 `activity = 2`
+  - 모두 없으면 `activity = 1`
+- [ ] **여러 루틴 처리**: 같은 날짜에 여러 루틴이 있으면 각각 별도 계산, 각 루틴은 자신의 이전 기록과만 비교
 - **검증**: activity 값이 올바르게 계산됨
+
+### Step 9-4: 최근 Achievement 조회 API
+
+- [ ] `GET /dashboard/achievements` 엔드포인트 생성
+- [ ] JWT 가드 적용
+- [ ] 현재 사용자의 모든 `routine_days` 조회 (최신순)
+  - `routine`, `workouts`, `workouts.sets` relation 포함
+- [ ] 각 `routine_day`에 대해 achievement 계산:
+  - 같은 `routine_pk`의 이전 가장 최근 기록 조회
+  - 없으면 스킵
+  - 이전 기록이 있으면 `weight * reps` 합산 비교
+  - 증량이 있는 workout만 `workouts` 배열에 추가
+  - 각 workout에 `weight_increase`, `previous_max_weight`, `current_max_weight` 포함
+- [ ] `achievement > 0`인 것만 필터링하여 최대 5개 반환
+- **검증**: 최근 5개 achievement 반환 확인
 
 ---
 
