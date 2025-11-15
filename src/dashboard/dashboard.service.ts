@@ -5,7 +5,7 @@ import { Routine } from '../routines/entities/routine.entity';
 import { RoutineDay } from '../routines/entities/routine-day.entity';
 import { WorkoutPersonalRecord } from './entities/workout-personal-record.entity';
 
-interface DayActivity {
+export interface DayActivity {
   date: string;
   activity: number;
   routine_name: string | null;
@@ -17,13 +17,13 @@ interface DayActivity {
   is_new_routine: boolean;
 }
 
-interface MaxWeightRecord {
+export interface MaxWeightRecord {
   workout_name: string;
   order: number;
   max_weight: number;
 }
 
-interface AchievementDetail {
+export interface AchievementDetail {
   date: string;
   routine_name: string;
   routine_pk: number;
@@ -32,7 +32,7 @@ interface AchievementDetail {
   workouts: AchievementWorkout[];
 }
 
-interface AchievementWorkout {
+export interface AchievementWorkout {
   workout_name: string;
   order: number;
   weight_increase: number;

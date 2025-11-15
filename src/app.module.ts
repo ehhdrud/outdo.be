@@ -9,8 +9,7 @@ import { WorkoutPersonalRecord } from './dashboard/entities/workout-personal-rec
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { DashboardModule } from './dashboard/dashboard.module';
-import { RoutinesController } from './routines/routines.controller';
-import { RoutinesService } from './routines/routines.service';
+import { RoutinesModule } from './routines/routines.module';
 
 @Module({
   imports: [
@@ -44,8 +43,10 @@ import { RoutinesService } from './routines/routines.service';
     UsersModule,
     // Dashboard 모듈
     DashboardModule,
+    // Routines 모듈
+    RoutinesModule,
   ],
-  controllers: [AppController, RoutinesController],
-  providers: [AppService, RoutinesService],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule {}
