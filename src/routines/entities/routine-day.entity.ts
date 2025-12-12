@@ -14,6 +14,8 @@ import { RoutineDayWorkout } from './routine-day-workout.entity';
 
 @Entity('routine_days')
 @Index('uniq_routine_session_date', ['routine_pk', 'session_date'], { unique: true })
+@Index('idx_routine_day_user_pk', ['user_pk'])
+@Index('idx_routine_day_session_date', ['session_date'])
 export class RoutineDay {
   @PrimaryGeneratedColumn({ name: 'routine_day_pk' })
   routine_day_pk: number;

@@ -12,6 +12,8 @@ import { User } from '../../users/entities/user.entity';
 
 @Entity('workout_personal_records')
 @Index('uniq_user_workout_order', ['user_pk', 'workout_name', 'order'], { unique: true })
+@Index('idx_workout_pr_routine_day_pk', ['routine_day_pk'])
+@Index('idx_workout_pr_achieved_at', ['achieved_at'])
 export class WorkoutPersonalRecord {
   @PrimaryGeneratedColumn({ name: 'record_pk' })
   record_pk: number;

@@ -5,11 +5,13 @@ import {
   ManyToOne,
   OneToMany,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { RoutineDay } from './routine-day.entity';
 import { RoutineDaySet } from './routine-day-set.entity';
 
 @Entity('routine_day_workouts')
+@Index('idx_routine_day_workout_pk', ['routine_day_pk'])
 export class RoutineDayWorkout {
   @PrimaryGeneratedColumn({ name: 'routine_day_workout_pk' })
   routine_day_workout_pk: number;

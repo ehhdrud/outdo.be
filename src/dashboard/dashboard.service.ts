@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, Between, In } from 'typeorm';
 import { Routine } from '../routines/entities/routine.entity';
 import { RoutineDay } from '../routines/entities/routine-day.entity';
 import { WorkoutPersonalRecord } from './entities/workout-personal-record.entity';
@@ -68,22 +68,12 @@ export class DashboardService {
 
     // 모든 날짜 배열 생성
     const dates = this.generateDateRange(startDate, endDate);
-    const dayActivities: DayActivity[] = dates.map((date) => ({
-      date,
-      activity: 0,
-      routine_name: null,
-      routine_pk: null,
-      routine_day_pk: null,
-      achievement: null,
-      has_max_weight_achieved: false,
-      max_weight_records: null,
-      is_new_routine: false,
-    }));
 
-    // Step 9-2: routine_days 데이터 조회 및 병합
-    const routineDays = await this.routineDayRepository.find({
+    // Step 9-2: routine_days 데이터 조회 및 병합 (날짜 범위로 필터링하여 쿼리 최적화)
+    const filteredRoutineDays = await this.routineDayRepository.find({
       where: {
         user_pk: userPk,
+        session_date: Between(startDate, endDate),
       },
       relations: ['routine', 'workouts', 'workouts.sets'],
       order: {
@@ -91,10 +81,49 @@ export class DashboardService {
       },
     });
 
-    // 날짜 범위 내의 routine_days만 필터링
-    const filteredRoutineDays = routineDays.filter(
-      (rd) => rd.session_date >= startDate && rd.session_date <= endDate,
-    );
+    // N+1 최적화: 관련 routine_pk들의 모든 routine_days를 한 번에 조회
+    const routinePks = [...new Set(filteredRoutineDays.map((rd) => rd.routine_pk))];
+    
+    // 이전 기록 계산을 위해 해당 루틴들의 모든 routine_days 조회 (한 번에)
+    const allRoutineDaysForComparison = routinePks.length > 0
+      ? await this.routineDayRepository.find({
+          where: { routine_pk: In(routinePks), user_pk: userPk },
+          relations: ['workouts', 'workouts.sets'],
+          order: { session_date: 'DESC' },
+        })
+      : [];
+
+    // routine_pk별로 그룹화 (이전 기록 찾기용)
+    const routineDaysByRoutinePk = new Map<number, RoutineDay[]>();
+    for (const rd of allRoutineDaysForComparison) {
+      if (!routineDaysByRoutinePk.has(rd.routine_pk)) {
+        routineDaysByRoutinePk.set(rd.routine_pk, []);
+      }
+      routineDaysByRoutinePk.get(rd.routine_pk)!.push(rd);
+    }
+
+    // N+1 최적화: 사용자의 모든 workout_personal_records 한 번에 조회
+    const allPersonalRecords = await this.workoutPersonalRecordRepository.find({
+      where: { user_pk: userPk },
+    });
+
+    // routine_day_pk 또는 achieved_at으로 빠른 조회를 위한 맵 생성
+    const personalRecordsByRoutineDayPk = new Map<number, WorkoutPersonalRecord[]>();
+    const personalRecordsByKey = new Map<string, WorkoutPersonalRecord>();
+    for (const record of allPersonalRecords) {
+      if (record.routine_day_pk) {
+        if (!personalRecordsByRoutineDayPk.has(record.routine_day_pk)) {
+          personalRecordsByRoutineDayPk.set(record.routine_day_pk, []);
+        }
+        personalRecordsByRoutineDayPk.get(record.routine_day_pk)!.push(record);
+      }
+      // workout_name + order 키로도 저장
+      const key = `${record.workout_name}:${record.order}`;
+      personalRecordsByKey.set(key, record);
+    }
+
+    // N+1 최적화: 루틴 정보는 이미 filteredRoutineDays에 포함되어 있음 (routine relation)
+    // 첫 번째 routine_day 정보도 routineDaysByRoutinePk에서 가져올 수 있음
 
     // 같은 날짜에 여러 루틴이 있을 수 있으므로, 각 routine_day를 별도의 DayActivity로 추가
     const activitiesWithRoutines: DayActivity[] = [];
@@ -103,53 +132,36 @@ export class DashboardService {
       const dateIndex = dates.indexOf(routineDay.session_date);
       if (dateIndex === -1) continue;
 
-      activitiesWithRoutines.push({
+      const activity: DayActivity = {
         date: routineDay.session_date,
         activity: 1, // 기본값 1
         routine_name: routineDay.routine.routine_name,
         routine_pk: routineDay.routine.routine_pk,
         routine_day_pk: routineDay.routine_day_pk,
-        achievement: null, // 나중에 계산
+        achievement: null,
         has_max_weight_achieved: false,
         max_weight_records: null,
         is_new_routine: false,
-      });
-    }
+      };
 
-    // Step 9-3: Achievement 계산 및 Activity 업데이트
-    for (const activity of activitiesWithRoutines) {
-      if (!activity.routine_day_pk) continue;
-
-      const routineDay = filteredRoutineDays.find((rd) => rd.routine_day_pk === activity.routine_day_pk);
-      if (!routineDay) continue;
-
-      // 이전 기록 조회 (현재 날짜보다 이전, 같은 routine_pk의 가장 최근 기록)
-      const earlierDays = await this.routineDayRepository.find({
-        where: {
-          routine_pk: routineDay.routine_pk,
-          user_pk: userPk,
-        },
-        relations: ['workouts', 'workouts.sets'],
-        order: {
-          session_date: 'DESC',
-        },
-      });
-
-      // 현재 날짜보다 이전인 가장 최근 기록 찾기
-      const previousRoutineDay = earlierDays.find((rd) => rd.session_date < routineDay.session_date);
+      // 이전 기록 찾기 (메모리에서)
+      const routineDays = routineDaysByRoutinePk.get(routineDay.routine_pk) ?? [];
+      const previousRoutineDay = routineDays.find((rd) => rd.session_date < routineDay.session_date);
 
       if (previousRoutineDay) {
-        await this.calculateAchievement(activity, routineDay, previousRoutineDay, userPk);
-      } else {
-        // 이전 기록이 없음
-        activity.achievement = null;
+        this.calculateAchievementSync(activity, routineDay, previousRoutineDay);
       }
 
-      // 최고 무게 달성 체크
-      await this.checkMaxWeightAchievement(activity, routineDay, userPk);
+      // 최고 무게 달성 체크 (메모리에서)
+      this.checkMaxWeightAchievementSync(
+        activity,
+        routineDay,
+        personalRecordsByRoutineDayPk,
+        personalRecordsByKey,
+      );
 
-      // 새로운 루틴 생성 체크
-      await this.checkNewRoutine(activity, routineDay, userPk);
+      // 새로운 루틴 생성 체크 (메모리에서)
+      this.checkNewRoutineSync(activity, routineDay, routineDays);
 
       // activity 업데이트
       if (
@@ -158,9 +170,9 @@ export class DashboardService {
         activity.is_new_routine
       ) {
         activity.activity = 2;
-      } else {
-        activity.activity = 1;
       }
+
+      activitiesWithRoutines.push(activity);
     }
 
     // 빈 날짜와 루틴이 있는 날짜를 합쳐서 반환 (날짜순 정렬)
@@ -202,7 +214,7 @@ export class DashboardService {
   }
 
   async getAchievements(userPk: number): Promise<AchievementDetail[]> {
-    // 모든 routine_days 조회 (최신순)
+    // N+1 최적화: 모든 routine_days를 한 번에 조회 (최신순)
     const routineDays = await this.routineDayRepository.find({
       where: {
         user_pk: userPk,
@@ -213,22 +225,21 @@ export class DashboardService {
       },
     });
 
+    // routine_pk별로 그룹화 (이전 기록 찾기용)
+    const routineDaysByRoutinePk = new Map<number, RoutineDay[]>();
+    for (const rd of routineDays) {
+      if (!routineDaysByRoutinePk.has(rd.routine_pk)) {
+        routineDaysByRoutinePk.set(rd.routine_pk, []);
+      }
+      routineDaysByRoutinePk.get(rd.routine_pk)!.push(rd);
+    }
+
     const achievements: AchievementDetail[] = [];
 
     for (const routineDay of routineDays) {
-      // 이전 기록 조회
-      const earlierDays = await this.routineDayRepository.find({
-        where: {
-          routine_pk: routineDay.routine_pk,
-          user_pk: userPk,
-        },
-        relations: ['workouts', 'workouts.sets'],
-        order: {
-          session_date: 'DESC',
-        },
-      });
-
-      const previousRoutineDay = earlierDays.find((rd) => rd.session_date < routineDay.session_date);
+      // 이전 기록 찾기 (메모리에서 - N+1 해결)
+      const routineDaysForPk = routineDaysByRoutinePk.get(routineDay.routine_pk) ?? [];
+      const previousRoutineDay = routineDaysForPk.find((rd) => rd.session_date < routineDay.session_date);
 
       if (!previousRoutineDay) {
         continue; // 이전 기록이 없으면 스킵
@@ -277,18 +288,22 @@ export class DashboardService {
           achievement: totalAchievement,
           workouts: achievementWorkouts,
         });
+
+        // 5개 달성하면 조기 종료 (성능 최적화)
+        if (achievements.length >= 5) {
+          break;
+        }
       }
     }
 
-    // 최대 5개만 반환
-    return achievements.slice(0, 5);
+    return achievements;
   }
 
-  private async calculateAchievement(
+  // Sync 버전: N+1 최적화용 (메모리에서 처리)
+  private calculateAchievementSync(
     activity: DayActivity,
     currentRoutineDay: RoutineDay,
     previousRoutineDay: RoutineDay,
-    userPk: number,
   ) {
     activity.achievement = 0; // 이전 기록이 있으면 0으로 초기화
 
@@ -314,27 +329,21 @@ export class DashboardService {
     }
   }
 
-  private async checkMaxWeightAchievement(
+  // Sync 버전: N+1 최적화용 (메모리에서 처리)
+  private checkMaxWeightAchievementSync(
     activity: DayActivity,
     routineDay: RoutineDay,
-    userPk: number,
+    personalRecordsByRoutineDayPk: Map<number, WorkoutPersonalRecord[]>,
+    personalRecordsByKey: Map<string, WorkoutPersonalRecord>,
   ) {
     const maxWeightRecords: MaxWeightRecord[] = [];
 
     for (const workout of routineDay.workouts || []) {
       if (!workout.sets || workout.sets.length === 0) continue;
 
-      const currentMaxWeight = Math.max(...workout.sets.map((s) => s.weight ?? 0));
-
-      // workout_personal_records에서 해당 날짜에 달성한 기록 조회
-      // routine_day_pk가 일치하거나 achieved_at이 해당 날짜인 경우
-      const maxWeightRecord = await this.workoutPersonalRecordRepository.findOne({
-        where: {
-          user_pk: userPk,
-          workout_name: workout.workout_name,
-          order: workout.order,
-        },
-      });
+      // workout_name + order 키로 조회
+      const key = `${workout.workout_name}:${workout.order}`;
+      const maxWeightRecord = personalRecordsByKey.get(key);
 
       // 해당 routine_day_pk에 달성한 기록이 있는지 확인
       // 또는 achieved_at이 해당 날짜인 경우
@@ -359,34 +368,28 @@ export class DashboardService {
     }
   }
 
-  private async checkNewRoutine(activity: DayActivity, routineDay: RoutineDay, userPk: number) {
-    // routine_pk의 created_at이 해당 날짜와 같은지 확인
-    const routine = await this.routineRepository.findOne({
-      where: {
-        routine_pk: routineDay.routine_pk,
-        user_pk: userPk,
-      },
-    });
-
+  // Sync 버전: N+1 최적화용 (메모리에서 처리)
+  private checkNewRoutineSync(
+    activity: DayActivity,
+    routineDay: RoutineDay,
+    allRoutineDaysForRoutine: RoutineDay[],
+  ) {
+    // routine 정보는 이미 routineDay.routine에 포함되어 있음
+    const routine = routineDay.routine;
     if (!routine) return;
 
-    const routineCreatedDate = new Date(routine.created_at).toISOString().split('T')[0];
+    const routineCreatedDate = this.formatDateToLocal(new Date(routine.created_at));
 
     if (routineCreatedDate === routineDay.session_date) {
       activity.is_new_routine = true;
       return;
     }
 
-    // 첫 번째 routine_day가 해당 날짜인지 확인
-    const firstRoutineDay = await this.routineDayRepository.findOne({
-      where: {
-        routine_pk: routineDay.routine_pk,
-        user_pk: userPk,
-      },
-      order: {
-        session_date: 'ASC',
-      },
-    });
+    // 첫 번째 routine_day가 해당 날짜인지 확인 (이미 정렬된 배열에서 마지막이 가장 오래된 것)
+    const sortedDays = [...allRoutineDaysForRoutine].sort((a, b) =>
+      a.session_date.localeCompare(b.session_date),
+    );
+    const firstRoutineDay = sortedDays[0];
 
     if (firstRoutineDay && firstRoutineDay.session_date === routineDay.session_date) {
       activity.is_new_routine = true;
@@ -395,14 +398,24 @@ export class DashboardService {
 
   private generateDateRange(startDate: string, endDate: string): string[] {
     const dates: string[] = [];
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    // 날짜 문자열을 로컬 날짜로 파싱 (시간대 문제 방지)
+    const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+    const [endYear, endMonth, endDay] = endDate.split('-').map(Number);
+    const start = new Date(startYear, startMonth - 1, startDay);
+    const end = new Date(endYear, endMonth - 1, endDay);
 
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      dates.push(d.toISOString().split('T')[0]);
+      dates.push(this.formatDateToLocal(d));
     }
 
     return dates;
+  }
+
+  private formatDateToLocal(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
   private isValidDate(date: string): boolean {

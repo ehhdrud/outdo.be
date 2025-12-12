@@ -32,7 +32,7 @@ export class RoutinesService {
           throw new ConflictException('이미 존재하는 루틴 이름입니다');
         }
 
-        const today = new Date().toISOString().split('T')[0];
+        const today = this.getToday();
 
         const trimmedName = dto.routine_name.trim();
 
@@ -63,17 +63,21 @@ export class RoutinesService {
 
           const sets = [];
 
+          let setOrder = 0;
           for (const set of workout.sets ?? []) {
             const savedSet = await routineDaySetRepository.save({
               routine_day_workout_pk: savedWorkout.routine_day_workout_pk,
+              set_order: setOrder,
               weight: set.weight ?? null,
               reps: set.reps,
             });
             sets.push({
               routine_day_set_pk: savedSet.routine_day_set_pk,
+              set_order: savedSet.set_order,
               weight: savedSet.weight,
               reps: savedSet.reps,
             });
+            setOrder++;
           }
 
           workoutsWithSets.push({
@@ -123,31 +127,28 @@ export class RoutinesService {
 
   async getRoutinesWithLatestInfo(userPk: number) {
     const routineRepository = this.dataSource.getRepository(Routine);
-    const routineDayRepository = this.dataSource.getRepository(RoutineDay);
 
+    // N+1 쿼리 최적화: 루틴과 모든 routineDays를 한 번에 조회
     const routines = await routineRepository.find({
       where: { user_pk: userPk },
+      relations: ['routineDays', 'routineDays.workouts', 'routineDays.workouts.sets'],
       order: { created_at: 'ASC' },
     });
 
-    const results = [];
+    return routines.map((routine) => {
+      // 가장 최근 routineDay 찾기 (session_date 기준 내림차순 정렬 후 첫 번째)
+      const sortedDays = (routine.routineDays ?? []).sort(
+        (a, b) => b.session_date.localeCompare(a.session_date),
+      );
+      const latestRoutineDay = sortedDays[0] ?? null;
 
-    for (const routine of routines) {
-      const latestRoutineDay = await routineDayRepository.findOne({
-        where: { routine_pk: routine.routine_pk },
-        order: { session_date: 'DESC' },
-        relations: ['workouts', 'workouts.sets'],
-      });
-
-      results.push({
+      return {
         routine_pk: routine.routine_pk,
         routine_name: routine.routine_name,
         last_session_date: latestRoutineDay?.session_date ?? null,
         workouts: this.mapRoutineDayWorkouts(latestRoutineDay),
-      });
-    }
-
-    return results;
+      };
+    });
   }
 
   async getTodayRoutine(userPk: number, routinePk: number) {
@@ -239,17 +240,21 @@ export class RoutinesService {
 
         const sets = [];
 
+        let setOrder = 0;
         for (const set of workout.sets ?? []) {
           const savedSet = await routineDaySetRepository.save({
             routine_day_workout_pk: savedWorkout.routine_day_workout_pk,
+            set_order: setOrder,
             weight: set.weight ?? null,
             reps: set.reps,
           });
           sets.push({
             routine_day_set_pk: savedSet.routine_day_set_pk,
+            set_order: savedSet.set_order,
             weight: savedSet.weight,
             reps: savedSet.reps,
           });
+          setOrder++;
         }
 
         workoutsWithSets.push({
@@ -318,17 +323,27 @@ export class RoutinesService {
         order: workout.order,
         notes: workout.notes,
         sets:
-          workout.sets?.map((set) => ({
-            routine_day_set_pk: set.routine_day_set_pk,
-            weight: set.weight,
-            reps: set.reps,
-          })) ?? [],
+          workout.sets
+            ?.map((set) => ({
+              routine_day_set_pk: set.routine_day_set_pk,
+              set_order: set.set_order,
+              weight: set.weight,
+              reps: set.reps,
+            }))
+            .sort((a, b) => (a.set_order ?? 0) - (b.set_order ?? 0)) ?? [],
       }))
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }
 
   private getToday() {
-    return new Date().toISOString().split('T')[0];
+    return this.formatDateToLocal(new Date());
+  }
+
+  private formatDateToLocal(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
   private isValidDate(date: string) {
